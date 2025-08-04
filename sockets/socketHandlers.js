@@ -34,7 +34,7 @@ module.exports = (io) => {
 
 
          // ✅ WebRTC signaling events — just relaying messages
-        socket.on('video-offer', ({ room, offer }) => {
+        socket.on('video-offer', async (offer) => {
             socket.to(room).emit('video-offer', offer);
         });
 

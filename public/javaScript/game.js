@@ -28,31 +28,39 @@ navigator.mediaDevices.getUserMedia({ video: true, audio: true })
         console.error('Error accessing media devices.', error);
     });
 
-function startCall(room) {
-    peerConnection = new RTCPeerConnection(config);
+function createPeerConnection(room) {
+  peerConnection = new RTCPeerConnection(config);
 
-    // Send any ice candidates to the other peer
-    peerConnection.onicecandidate = ({ candidate }) => {
-        if (candidate) {
-            socket.emit('ice-candidate', { room, candidate });
-        }
-    };
+  // 1) Add our tracks
+  localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
 
-    // Display remote stream
-    peerConnection.ontrack = ({ streams: [stream] }) => {
-        remoteVideo.srcObject = stream;
-    };
+  // 2) When we get a remote track, show it
+  peerConnection.ontrack = ({ streams: [stream] }) => {
+    remoteVideo.srcObject = stream;
+  };
 
-    // Add local stream tracks
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+  // 3) Forward ICE candidates
+  peerConnection.onicecandidate = ({ candidate }) => {
+    if (candidate) {
+      socket.emit('ice-candidate', { room, candidate });
+    }
+  };
 
-    // Create offer
-    peerConnection.createOffer()
-        .then(offer => {
-            peerConnection.setLocalDescription(offer);
-            socket.emit('video-offer', { room, offer });
-        });
+  return peerConnection;
 }
+
+
+// ——— White: kick off the call ———
+function startCall(room) {
+  const pc = createPeerConnection(room);
+
+  pc.createOffer()
+    .then(offer => pc.setLocalDescription(offer).then(() => offer))
+    .then(offer => {
+      socket.emit('video-offer', { room, offer });
+    });
+}
+
 
 
 if(!playerRole){
@@ -226,31 +234,30 @@ socket.on("opponentMove" , (move)=>{
 })
 
 
+
+// ——— All roles: listen for offer ———
 socket.on('video-offer', async (offer) => {
-    peerConnection = new RTCPeerConnection(config);
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+  // Lazily create PC
+  const pc = createPeerConnection(currentRoom);
 
-    peerConnection.onicecandidate = ({ candidate }) => {
-        if (candidate) socket.emit('ice-candidate', { room: currentRoom, candidate });
-    };
-
-    peerConnection.ontrack = ({ streams: [stream] }) => {
-        remoteVideo.srcObject = stream;
-    };
-
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    socket.emit('video-answer', { room: currentRoom, answer });
+  await pc.setRemoteDescription(new RTCSessionDescription(offer));
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  socket.emit('video-answer', { room: currentRoom, answer });
 });
 
-socket.on('video-answer', (answer) => {
-    peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+// ——— All roles: listen for answer ———
+socket.on('video-answer', async (answer) => {
+  if (!peerConnection) return;
+  await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
 });
 
-socket.on('ice-candidate', (candidate) => {
-    peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+// ——— All roles: listen for ICE ———
+socket.on('ice-candidate', async (candidate) => {
+  if (!peerConnection) return;
+  await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
 });
+
 
 
 
